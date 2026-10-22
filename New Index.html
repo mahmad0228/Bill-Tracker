@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart Electricity Unit Tracker</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Firebase Modular SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getDatabase, ref, set, onValue, push, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+    window.FirebaseSDK = { initializeApp, getDatabase, ref, set, onValue, push, remove };
+    window.dispatchEvent(new Event('firebase-loaded'));
+  </script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    .card-glow {
+      background: #1e293b;
+      border: 1px solid #334155;
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="min-h-screen pb-12">
+
+  <!-- Header & Meter Selection Bar -->
+  <header class="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 shadow-lg">
+    <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+      
+      <!-- Logo & Title -->
+      <div class="flex items-center gap-2">
+        <div class="p-2 bg-amber-500/10 rounded-lg text-amber-400 border border-amber-500/20">
+          <i data-lucide="zap" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            Bijli Tracker Pro
+            <span id="cloudStatusBadge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-500" id="statusDot"></span>
+              <span id="statusText">Offline Mode</span>
+            </span>
+          </h1>
+          <p class="text-xs text-slate-400">Multi-meter Electricity Consumption Monitor</p>
+        </div>
+      </div>
+
+      <!-- Meter Selector & Action Buttons -->
+      <div class="flex items-center gap-2 w-full sm:w-auto">
+        <select id="meterSelect" class="bg-slate-800 border border-slate-700 text-amber-400 font-semibold text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-500 focus:outline-none flex-1 sm:w-48">
+          <!-- Dynamically Populated -->
+        </select>
+
+        <button onclick="openNewMeterModal()" title="Add New House/Meter" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 transition">
+          <i data-lucide="plus" class="w-5 h-5"></i>
+        </button>
+
+        <button onclick="openSettingsModal()" title="Meter Settings" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 transition">
+          <i data-lucide="settings" class="w-5 h-5"></i>
+        </button>
+
+        <button onclick="openFirebaseModal()" title="Firebase Cloud Config" class="p-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-lg transition">
+          <i data-lucide="cloud" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-4xl mx-auto px-4 mt-6 space-y-6">
+
+    <!-- Dashboard Metric Cards Grid -->
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" id="metricsGrid">
+      
+      <!-- Last Bill Date -->
+      <div class="card-glow p-3.5 rounded-xl flex flex-col justify-between">
+        <span class="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+          <i data-lucide="calendar" class="w-3.5 h-3.5 text-slate-400"></i> Last Bill
+        </span>
+        <div class="mt-2">
+          <div id="dispLastBillDate" class="text-sm md:text-base font-semibold text-slate-200">--/--/----</div>
+          <span id="dispBaseUnit" class="text-[11px] text-slate-500">Base: -- units</span>
+        </div>
+      </div>
+
+      <!-- Next Bill Date -->
+      <div class="card-glow p-3.5 rounded-xl flex flex-col justify-between border-sky-500/20">
+        <span class="text-xs font-medium text-sky-400 flex items-center gap-1.5">
+          <i data-lucide="calendar-check" class="w-3.5 h-3.5"></i> Next Bill
+        </span>
+        <div class="mt-2">
+          <div id="dispNextBillDate" class="text-sm md:text-base font-semibold text-sky-400">--/--/----</div>
+          <span id="dispCycleLabel" class="text-[11px] text-slate-400">Cycle: 2 Months</span>
+        </div>
+      </div>
+
+      <!-- Total Days -->
+      <div class="card-glow p-3.5 rounded-xl flex flex-col justify-between">
+        <span class="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+          <i data-lucide="clock" class="w-3.5 h-3.5"></i> Total Days
+        </span>
+        <div class="mt-2">
+          <div id="dispTotalDays" class="text-2xl font-bold text-slate-100">0</div>
+          <span class="text-[11px] text-slate-500">From start date</span>
+        </div>
+      </div>
+
+      <!-- Days Left -->
+      <div class="card-glow p-3.5 rounded-xl flex flex-col justify-between">
+        <span class="text-xs font-medium text-amber-400 flex items-center gap-1.5">
+          <i data-lucide="hourglass" class="w-3.5 h-3.5"></i> Days Left
+        </span>
+        <div class="mt-2">
+          <div id="dispDaysLeft" class="text-2xl font-bold text-amber-400">0</div>
+          <span id="dispTargetDays" class="text-[11px] text-slate-500">Target: 60 Days</span>
+        </div>
+      </div>
+
+      <!-- Unit Used -->
+      <div class="card-glow p-3.5 rounded-xl flex flex-col justify-between">
+        <span class="text-xs font-medium text-orange-400 flex items-center gap-1.5">
+          <i data-lucide="gauge" class="w-3.5 h-3.5"></i> Unit Used
+        </span>
+        <div class="mt-2">
+          <div id="dispUnitUsed" class="text-2xl font-bold text-orange-400">0</div>
+          <span id="dispAvgPerDay" class="text-[11px] text-slate-500">Avg: 0 u/day</span>
+        </div>
+      </div>
+
+      <!-- Unit Left -->
+      <div class="card-glow p-3.5 rounded-xl flex flex-col justify-between">
+        <span class="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
+          <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> Unit Left
+        </span>
+        <div class="mt-2">
+          <div id="dispUnitLeft" class="text-2xl font-bold text-emerald-400">0</div>
+          <span id="dispLimitLabel" class="text-[11px] text-slate-500">Max: 600 Units</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Warning / Status Banner -->
+    <div id="alertBanner" class="hidden p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-center gap-3">
+      <i data-lucide="alert-triangle" class="w-5 h-5 text-red-400 shrink-0"></i>
+      <span id="alertMessage">Warning: Unit limit exceeded! Please monitor consumption.</span>
+    </div>
+
+    <!-- Quick Entry Form Card -->
+    <div class="card-glow p-5 rounded-xl">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-md font-semibold text-white flex items-center gap-2">
+          <i data-lucide="edit-3" class="w-4 h-4 text-amber-400"></i> Add Meter Reading
+        </h2>
+        <span class="text-xs text-slate-400 flex items-center gap-1">
+          <i data-lucide="info" class="w-3.5 h-3.5"></i> Auto date & time enabled
+        </span>
+      </div>
+
+      <form id="readingForm" onsubmit="handleAddReading(event)" class="space-y-4">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div class="relative flex-1">
+            <input type="number" id="meterUnitInput" placeholder="Enter Current Meter Unit (e.g. 29431)" required min="0" step="1"
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 text-base focus:outline-none focus:ring-2 focus:ring-amber-500 pr-16" />
+            <span class="absolute right-4 top-3.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Units</span>
+          </div>
+          <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-6 py-3 rounded-lg transition flex items-center justify-center gap-2 shrink-0">
+            <i data-lucide="plus-circle" class="w-5 h-5"></i> Add Reading
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Readings History Table Card -->
+    <div class="card-glow rounded-xl overflow-hidden">
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+        <h2 class="text-md font-semibold text-white flex items-center gap-2">
+          <i data-lucide="history" class="w-4 h-4 text-amber-400"></i> Reading History
+        </h2>
+        <div class="flex items-center gap-2">
+          <span id="recordCount" class="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-full">0 Entries</span>
+          <button onclick="handleNewBillingCycle()" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-lg transition flex items-center gap-1">
+            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Close Bill Cycle
+          </button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm text-slate-300">
+          <thead class="bg-slate-900/60 text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <tr>
+              <th class="px-4 py-3">Time & Date</th>
+              <th class="px-4 py-3 text-right">Meter Reading</th>
+              <th class="px-4 py-3 text-right">Consumed</th>
+              <th class="px-4 py-3 text-right">Balance Left</th>
+              <th class="px-4 py-3 text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="readingsTableBody" class="divide-y divide-slate-800/60">
+            <!-- Dynamic Rows -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Modal: New House/Meter Setup -->
+  <div id="newMeterModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="card-glow max-w-md w-full rounded-2xl p-6 relative">
+      <button onclick="closeModal('newMeterModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+        <i data-lucide="home" class="w-5 h-5 text-amber-400"></i> Add New Meter / House
+      </h3>
+
+      <form onsubmit="handleCreateMeter(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Meter / House Name</label>
+          <input type="text" id="newMeterName" placeholder="e.g. Home, Mateen, Shop 1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Billing Cycle Duration</label>
+          <select id="newMeterCycle" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            <option value="2">2 Months (60 Days / 600 Units Target)</option>
+            <option value="1">1 Month (30 Days / 300 Units Target)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Last Bill Date</label>
+          <input type="date" id="newMeterDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Starting Meter Reading (Units)</label>
+          <input type="number" id="newMeterStartUnit" placeholder="e.g. 29255" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+        </div>
+
+        <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-lg transition">
+          Create Meter
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Meter Settings -->
+  <div id="settingsModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="card-glow max-w-md w-full rounded-2xl p-6 relative">
+      <button onclick="closeModal('settingsModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+        <i data-lucide="sliders" class="w-5 h-5 text-amber-400"></i> Meter Settings
+      </h3>
+
+      <form onsubmit="handleUpdateMeterSettings(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Billing Cycle</label>
+          <select id="editMeterCycle" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white">
+            <option value="2">2 Months (60 Days / 600 Units Target)</option>
+            <option value="1">1 Month (30 Days / 300 Units Target)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Last Bill Date</label>
+          <input type="date" id="editMeterDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Starting Base Unit</label>
+          <input type="number" id="editMeterBaseUnit" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white" />
+        </div>
+
+        <div class="pt-2 flex gap-2">
+          <button type="submit" class="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-lg transition">
+            Save Changes
+          </button>
+          <button type="button" onclick="handleDeleteCurrentMeter()" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-4 py-2.5 rounded-lg transition">
+            Delete Meter
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Firebase Setup Instructions -->
+  <div id="firebaseModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="card-glow max-w-lg w-full rounded-2xl p-6 relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeModal('firebaseModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-amber-400 mb-2 flex items-center gap-2">
+        <i data-lucide="cloud" class="w-5 h-5"></i> Firebase Cloud Database Setup
+      </h3>
+      <p class="text-xs text-slate-400 mb-4">
+        Connect your free Google Firebase Realtime Database so your data never gets deleted even if history is cleared!
+      </p>
+
+      <div class="space-y-4 text-xs text-slate-300 bg-slate-900 p-4 rounded-xl border border-slate-800">
+        <p><b class="text-amber-400">Step 1:</b> Go to <a href="https://console.firebase.google.com/" target="_blank" class="text-sky-400 underline">firebase.google.com</a> and sign in with Google.</p>
+        <p><b class="text-amber-400">Step 2:</b> Click <b>"Add project"</b> & name it.</p>
+        <p><b class="text-amber-400">Step 3:</b> Create a <b>Realtime Database</b> in test mode.</p>
+        <p><b class="text-amber-400">Step 4:</b> Copy API Key and Database URL and paste below:</p>
+      </div>
+
+      <form onsubmit="handleSaveFirebaseConfig(event)" class="space-y-3 mt-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">API Key</label>
+          <input type="text" id="fbApiKey" placeholder="AIzaSy..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-mono text-xs" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Database URL</label>
+          <input type="text" id="fbDbUrl" placeholder="https://your-app-default-rtdb.firebaseio.com" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-mono text-xs" />
+        </div>
+
+        <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-lg transition mt-2">
+          Save & Connect Cloud
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- App Script Logic -->
+  <script>
+    let appState = {
+      activeMeterId: "home",
+      meters: {
+        home: {
+          id: "home",
+          name: "Home",
+          cycleMonths: 2,
+          lastBillDate: "2026-09-17",
+          baseUnit: 29255,
+          readings: []
+        }
+      },
+      firebaseConfig: null
+    };
+
+    let fbApp = null;
+    let fbDb = null;
+    let isRemoteSyncing = false;
+
+    // Initialize App On Load
+    function initApp() {
+      const savedState = localStorage.getItem('bijli_tracker_state');
+      if (savedState) {
+        try {
+          appState = JSON.parse(savedState);
+        } catch(e) { console.error("Error parsing saved state", e); }
+      }
+
+      // Pre-fill modal fields if config exists
+      if (appState.firebaseConfig) {
+        document.getElementById('fbApiKey').value = appState.firebaseConfig.apiKey || '';
+        document.getElementById('fbDbUrl').value = appState.firebaseConfig.databaseURL || '';
+      }
+
+      populateMeterDropdown();
+      updateDashboardUI();
+      lucide.createIcons();
+
+      // Setup Selector Listener
+      document.getElementById('meterSelect').addEventListener('change', (e) => {
+        appState.activeMeterId = e.target.value;
+        saveState();
+        updateDashboardUI();
+      });
+
+      // Try connecting to Firebase if config is saved
+      if (appState.firebaseConfig && appState.firebaseConfig.apiKey && appState.firebaseConfig.databaseURL) {
+        connectToFirebase(appState.firebaseConfig);
+      }
+    }
+
+    // Connect to Firebase and Sync
+    function connectToFirebase(config) {
+      if (!window.FirebaseSDK) return;
+      try {
+        const { initializeApp, getDatabase, ref, onValue } = window.FirebaseSDK;
+        fbApp = initializeApp({
+          apiKey: config.apiKey,
+          databaseURL: config.databaseURL
+        });
+        fbDb = getDatabase(fbApp);
+
+        // Update UI status to Online
+        document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse";
+        document.getElementById('statusText').innerText = "Online / Connected";
+        document.getElementById('cloudStatusBadge').className = "text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1";
+
+        // Listen for real-time changes from cloud
+        const stateRef = ref(fbDb, 'appState');
+        onValue(stateRef, (snapshot) => {
+          const remoteData = snapshot.val();
+          if (remoteData) {
+            isRemoteSyncing = true;
+            appState = remoteData;
+            localStorage.setItem('bijli_tracker_state', JSON.stringify(appState));
+            populateMeterDropdown();
+            updateDashboardUI();
+            isRemoteSyncing = false;
+          }
+        });
+      } catch (e) {
+        console.error("Firebase connection error:", e);
+        document.getElementById('statusText').innerText = "Connection Error";
+      }
+    }
+
+    // Save to LocalStorage & Sync Firebase
+    function saveState() {
+      if (isRemoteSyncing) return;
+      localStorage.setItem('bijli_tracker_state', JSON.stringify(appState));
+      if (fbDb) {
+        try {
+          const { set, ref } = window.FirebaseSDK;
+          set(ref(fbDb, 'appState'), appState);
+        } catch(e) { console.error("Firebase sync error:", e); }
+      }
+    }
+
+    // Populate Meter Selector
+    function populateMeterDropdown() {
+      const select = document.getElementById('meterSelect');
+      if (!select) return;
+      select.innerHTML = '';
+      Object.values(appState.meters || {}).forEach(meter => {
+        const option = document.createElement('option');
+        option.value = meter.id;
+        option.textContent = `${meter.name} (${meter.cycleMonths}M Cycle)`;
+        if (meter.id === appState.activeMeterId) option.selected = true;
+        select.appendChild(option);
+      });
+    }
+
+    // Update Dashboard UI Calculations
+    function updateDashboardUI() {
+      const meter = appState.meters[appState.activeMeterId];
+      if (!meter) return;
+
+      const readings = meter.readings || [];
+      const baseUnit = Number(meter.baseUnit) || 0;
+      const cycleMonths = Number(meter.cycleMonths) || 2;
+      const allowedTargetLimit = cycleMonths * 300;
+
+      const startDate = new Date(meter.lastBillDate);
+      const nextBillDate = new Date(startDate);
+      nextBillDate.setMonth(nextBillDate.getMonth() + cycleMonths);
+
+      let latestDate = startDate;
+      let currentUnit = baseUnit;
+
+      if (readings.length > 0) {
+        const sortedReadings = [...readings].sort((a, b) => new Date(a.date) - new Date(b.date));
+        const lastEntry = sortedReadings[sortedReadings.length - 1];
+        latestDate = new Date(lastEntry.date);
+        currentUnit = Number(lastEntry.unit);
+      }
+
+      const diffTime = Math.abs(latestDate - startDate);
+      const totalDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      const targetDays = cycleMonths * 30;
+      const effectiveAllowedLimit = totalDays > targetDays ? totalDays * 10 : allowedTargetLimit;
+      const daysLeft = Math.max(0, targetDays - totalDays);
+
+      const unitUsed = Math.max(0, currentUnit - baseUnit);
+      const unitLeft = effectiveAllowedLimit - unitUsed;
+      const avgPerDay = totalDays > 0 ? (unitUsed / totalDays).toFixed(1) : 0;
+
+      document.getElementById('dispLastBillDate').innerText = formatDateDisplay(meter.lastBillDate);
+      document.getElementById('dispBaseUnit').innerText = `Base: ${baseUnit} units`;
+
+      document.getElementById('dispNextBillDate').innerText = formatDateDisplay(nextBillDate.toISOString().split('T')[0]);
+      document.getElementById('dispCycleLabel').innerText = `Cycle: ${cycleMonths} Month${cycleMonths > 1 ? 's' : ''}`;
+
+      document.getElementById('dispTotalDays').innerText = totalDays;
+      document.getElementById('dispDaysLeft').innerText = daysLeft;
+      document.getElementById('dispTargetDays').innerText = `Target: ${targetDays} Days`;
+
+      document.getElementById('dispUnitUsed').innerText = unitUsed;
+      document.getElementById('dispAvgPerDay').innerText = `Avg: ${avgPerDay} u/day`;
+
+      document.getElementById('dispUnitLeft').innerText = unitLeft;
+      document.getElementById('dispLimitLabel').innerText = `Limit: ${effectiveAllowedLimit} Units`;
+
+      const alertBanner = document.getElementById('alertBanner');
+      if (unitLeft < 50 || unitUsed > effectiveAllowedLimit) {
+        alertBanner.classList.remove('hidden');
+        document.getElementById('alertMessage').innerText = unitUsed > effectiveAllowedLimit 
+          ? `Warning: Allowed limit (${effectiveAllowedLimit} Units) has been exceeded!` 
+          : `Alert: Only ${unitLeft} units remaining in budget!`;
+      } else {
+        alertBanner.classList.add('hidden');
+      }
+
+      renderReadingsTable(readings, baseUnit, effectiveAllowedLimit);
+    }
+
+    // Render Table Rows
+    function renderReadingsTable(readings, baseUnit, allowedLimit) {
+      const tbody = document.getElementById('readingsTableBody');
+      tbody.innerHTML = '';
+
+      document.getElementById('recordCount').innerText = `${readings.length} Entries`;
+
+      const sortedReadings = [...readings].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time));
+
+      sortedReadings.forEach((item) => {
+        const consumed = item.unit - baseUnit;
+        const balance = allowedLimit - consumed;
+
+        const row = document.createElement('tr');
+        row.className = "hover:bg-slate-800/40 transition";
+        row.innerHTML = `
+          <td class="px-4 py-3">
+            <div class="font-medium text-white">${item.time}</div>
+            <div class="text-xs text-slate-400">${formatDateDisplay(item.date)}</div>
+          </td>
+          <td class="px-4 py-3 text-right font-semibold text-sky-400">${item.unit}</td>
+          <td class="px-4 py-3 text-right font-medium text-orange-400">+${consumed}</td>
+          <td class="px-4 py-3 text-right font-bold ${balance < 50 ? 'text-red-400' : 'text-emerald-400'}">${balance}</td>
+          <td class="px-4 py-3 text-center">
+            <button onclick="handleDeleteReading('${item.id}')" class="text-slate-500 hover:text-red-400 transition p-1">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      lucide.createIcons();
+    }
+
+    // Add New Reading Form Submission
+    function handleAddReading(e) {
+      e.preventDefault();
+      const unitInput = document.getElementById('meterUnitInput');
+      const val = Number(unitInput.value);
+
+      if (!val) return;
+
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const newRecord = {
+        id: 'r_' + Date.now(),
+        date: dateStr,
+        time: timeStr,
+        unit: val
+      };
+
+      appState.meters[appState.activeMeterId].readings.push(newRecord);
+      unitInput.value = '';
+
+      saveState();
+      updateDashboardUI();
+    }
+
+    // Delete Reading
+    function handleDeleteReading(id) {
+      if (confirm('Are you sure you want to delete this reading?')) {
+        const meter = appState.meters[appState.activeMeterId];
+        meter.readings = meter.readings.filter(r => r.id !== id);
+        saveState();
+        updateDashboardUI();
+      }
+    }
+
+    // Close Billing Cycle
+    function handleNewBillingCycle() {
+      const meter = appState.meters[appState.activeMeterId];
+      if (confirm(`Close current billing cycle for ${meter.name}? This will update the Last Bill Date and Reset readings.`)) {
+        const readings = meter.readings || [];
+        if (readings.length > 0) {
+          const sorted = [...readings].sort((a, b) => new Date(a.date) - new Date(b.date));
+          const lastReading = sorted[sorted.length - 1];
+          meter.baseUnit = lastReading.unit;
+          meter.lastBillDate = lastReading.date;
+        }
+        meter.readings = [];
+        saveState();
+        updateDashboardUI();
+      }
+    }
+
+    // Modal Helpers
+    function openNewMeterModal() { document.getElementById('newMeterModal').classList.remove('hidden'); }
+    function openSettingsModal() { 
+      const meter = appState.meters[appState.activeMeterId];
+      document.getElementById('editMeterCycle').value = meter.cycleMonths;
+      document.getElementById('editMeterDate').value = meter.lastBillDate;
+      document.getElementById('editMeterBaseUnit').value = meter.baseUnit;
+      document.getElementById('settingsModal').classList.remove('hidden'); 
+    }
+    function openFirebaseModal() { document.getElementById('firebaseModal').classList.remove('hidden'); }
+    function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+    // Create New Meter
+    function handleCreateMeter(e) {
+      e.preventDefault();
+      const name = document.getElementById('newMeterName').value;
+      const cycle = Number(document.getElementById('newMeterCycle').value);
+      const date = document.getElementById('newMeterDate').value;
+      const startUnit = Number(document.getElementById('newMeterStartUnit').value);
+
+      const id = 'meter_' + Date.now();
+      appState.meters[id] = {
+        id,
+        name,
+        cycleMonths: cycle,
+        lastBillDate: date,
+        baseUnit: startUnit,
+        readings: []
+      };
+
+      appState.activeMeterId = id;
+      saveState();
+      populateMeterDropdown();
+      updateDashboardUI();
+      closeModal('newMeterModal');
+    }
+
+    // Save Meter Settings
+    function handleUpdateMeterSettings(e) {
+      e.preventDefault();
+      const meter = appState.meters[appState.activeMeterId];
+      meter.cycleMonths = Number(document.getElementById('editMeterCycle').value);
+      meter.lastBillDate = document.getElementById('editMeterDate').value;
+      meter.baseUnit = Number(document.getElementById('editMeterBaseUnit').value);
+
+      saveState();
+      populateMeterDropdown();
+      updateDashboardUI();
+      closeModal('settingsModal');
+    }
+
+    // Delete Current Meter
+    function handleDeleteCurrentMeter() {
+      const keys = Object.keys(appState.meters);
+      if (keys.length <= 1) {
+        alert('You must have at least one meter in the app!');
+        return;
+      }
+      if (confirm('Delete this meter permanently?')) {
+        delete appState.meters[appState.activeMeterId];
+        appState.activeMeterId = Object.keys(appState.meters)[0];
+        saveState();
+        populateMeterDropdown();
+        updateDashboardUI();
+        closeModal('settingsModal');
+      }
+    }
+
+    // Save Firebase Config
+    function handleSaveFirebaseConfig(e) {
+      e.preventDefault();
+      const apiKey = document.getElementById('fbApiKey').value.trim();
+      const databaseURL = document.getElementById('fbDbUrl').value.trim();
+
+      if (!apiKey || !databaseURL) {
+        alert('Please fill both API Key and Database URL!');
+        return;
+      }
+
+      appState.firebaseConfig = { apiKey, databaseURL };
+      saveState();
+      alert('Firebase configured successfully! Connecting to cloud...');
+      closeModal('firebaseModal');
+      connectToFirebase(appState.firebaseConfig);
+    }
+
+    // Format Date Utility
+    function formatDateDisplay(dateStr) {
+      if (!dateStr) return '--/--/----';
+      const [year, month, day] = dateStr.split('-');
+      return `${month}/${day}/${year}`;
+    }
+
+    // Initialize App On Load
+    window.addEventListener('firebase-loaded', initApp);
+    // Fallback if event already fired
+    if (window.FirebaseSDK) {
+      window.onload = initApp;
+    }
+  </script>
+</body>
+</html>
